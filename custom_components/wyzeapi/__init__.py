@@ -224,3 +224,13 @@ async def setup_coordinators(
                 hass, lock_service, lock, scan_interval
             )
             await coordinators[lock.mac].update_lock_info()
+            # Deliberately NOT async_config_entry_first_refresh(): a cold BLE connect
+            # plus retries can exceed 10s and would stall setup, which is the
+            # regression fixed by issue #826 / PR #827. Refreshing in the background
+            # gets state in seconds instead of after a full interval, without
+            # delaying startup.
+            config_entry.async_create_background_task(
+                hass,
+                coordinators[lock.mac].async_refresh(),
+                f"wyze bolt initial refresh {lock.mac}",
+            )
