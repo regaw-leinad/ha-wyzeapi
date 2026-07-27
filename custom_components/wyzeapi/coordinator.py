@@ -23,6 +23,7 @@ from .const import (
     YDBLE_BATTERY_LEVEL_UUID,
     BOLT_MAX_TRANSIENT_FAILURES,
     BOLT_TRANSIENT_RETRY_SECONDS,
+    DEFAULT_BOLT_SCAN_INTERVAL,
     YDBLE_LOCK_STATE_UUID,
     YDBLE_UART_RX_UUID,
     YDBLE_UART_TX_UUID,
@@ -49,14 +50,18 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
     """Manages fetching data from BLE periodically."""
 
     def __init__(
-        self, hass: HomeAssistant, lock_service: LockService, lock: Lock
+        self,
+        hass: HomeAssistant,
+        lock_service: LockService,
+        lock: Lock,
+        scan_interval: int = DEFAULT_BOLT_SCAN_INTERVAL,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name="Wyze Lock State Updater",
-            update_interval=timedelta(seconds=300),
+            update_interval=timedelta(seconds=scan_interval),
         )
         self._lock_service = lock_service
         self._lock = lock

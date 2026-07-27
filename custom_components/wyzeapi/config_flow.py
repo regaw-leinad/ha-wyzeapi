@@ -14,6 +14,10 @@ from wyzeapy import Wyzeapy, exceptions
 
 from .const import (
     DOMAIN,
+    BOLT_SCAN_INTERVAL,
+    DEFAULT_BOLT_SCAN_INTERVAL,
+    MAX_BOLT_SCAN_INTERVAL,
+    MIN_BOLT_SCAN_INTERVAL,
     ACCESS_TOKEN,
     REFRESH_TOKEN,
     REFRESH_TIME,
@@ -168,7 +172,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=self.config_entry.options.get(
                         BULB_LOCAL_CONTROL, DEFAULT_LOCAL_CONTROL
                     ),
-                ): bool
+                ): bool,
+                vol.Optional(
+                    BOLT_SCAN_INTERVAL,
+                    default=self.config_entry.options.get(
+                        BOLT_SCAN_INTERVAL, DEFAULT_BOLT_SCAN_INTERVAL
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_BOLT_SCAN_INTERVAL, max=MAX_BOLT_SCAN_INTERVAL),
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=data_schema)
