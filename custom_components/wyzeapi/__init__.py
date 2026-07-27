@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from aiohttp.client_exceptions import ClientConnectorError
 from homeassistant.config_entries import ConfigEntry, ConfigEntryNotReady, SOURCE_IMPORT
@@ -18,6 +20,8 @@ from wyzeapy.wyze_auth_lib import Token
 
 from .const import (
     DOMAIN,
+    BOLT_SCAN_INTERVAL,
+    DEFAULT_BOLT_SCAN_INTERVAL,
     CONF_CLIENT,
     ACCESS_TOKEN,
     REFRESH_TOKEN,
@@ -97,6 +101,19 @@ async def async_setup(
     return True
 
 
+def merged_options(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Fill in defaults for missing options without discarding the stored ones.
+
+    Merge rather than replace: assigning a fresh dict on every setup silently dropped
+    every option except the bulb toggle on each restart. That was harmless while there
+    was only one option and becomes data loss as soon as there is a second.
+    """
+    return {
+        **options,
+        BULB_LOCAL_CONTROL: options.get(BULB_LOCAL_CONTROL, DEFAULT_LOCAL_CONTROL),
+    }
+
+
 # noinspection DuplicatedCode
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Wyze Home Assistant Integration from a config entry."""
@@ -143,12 +160,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     }
     await setup_coordinators(hass, config_entry, client)
 
-    options_dict = {
-        BULB_LOCAL_CONTROL: config_entry.options.get(
-            BULB_LOCAL_CONTROL, DEFAULT_LOCAL_CONTROL
-        )
-    }
-    hass.config_entries.async_update_entry(config_entry, options=options_dict)
+    hass.config_entries.async_update_entry(
+        config_entry, options=merged_options(config_entry.options)
+    )
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
@@ -206,11 +220,16 @@ async def setup_coordinators(
         )
         return
 
+    scan_interval = config_entry.options.get(
+        BOLT_SCAN_INTERVAL, DEFAULT_BOLT_SCAN_INTERVAL
+    )
     lock_service = await client.lock_service
     for lock in await lock_service.get_locks():
         if lock.product_model == "YD_BT1":
             coordinators = hass.data[DOMAIN][config_entry.entry_id].setdefault(
                 "coordinators", {}
             )
-            coordinators[lock.mac] = WyzeLockBoltCoordinator(hass, lock_service, lock)
+            coordinators[lock.mac] = WyzeLockBoltCoordinator(
+                hass, lock_service, lock, scan_interval
+            )
             await coordinators[lock.mac].update_lock_info()

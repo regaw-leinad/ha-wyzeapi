@@ -5,16 +5,24 @@ from datetime import datetime, timedelta
 from typing import Dict
 
 from bleak import BleakClient
-from bleak.exc import BleakCharacteristicNotFoundError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from wyzeapy.services.lock_service import LockService, Lock
 
-from .const import YDBLE_LOCK_STATE_UUID, YDBLE_UART_RX_UUID, YDBLE_UART_TX_UUID
+from .const import (
+    BOLT_MAX_TRANSIENT_FAILURES,
+    BOLT_TRANSIENT_RETRY_SECONDS,
+    DEFAULT_BOLT_SCAN_INTERVAL,
+    YDBLE_LOCK_STATE_UUID,
+    YDBLE_UART_RX_UUID,
+    YDBLE_UART_TX_UUID,
+)
 from .token_manager import token_exception_handler
 from .ydble_utils import (
     decrypt_ecb,
@@ -32,14 +40,18 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
     """Manages fetching data from BLE periodically."""
 
     def __init__(
-        self, hass: HomeAssistant, lock_service: LockService, lock: Lock
+        self,
+        hass: HomeAssistant,
+        lock_service: LockService,
+        lock: Lock,
+        scan_interval: int = DEFAULT_BOLT_SCAN_INTERVAL,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name="Wyze Lock State Updater",
-            update_interval=timedelta(seconds=300),
+            update_interval=timedelta(seconds=scan_interval),
         )
         self._lock_service = lock_service
         self._lock = lock
@@ -49,6 +61,7 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
         self._mac = None
         self._bleak_client = None
         self._current_command = None
+        self._transient_failures = 0
         # Initialize data to prevent errors during setup
         self.data = {"state": None, "timestamp": None}
 
@@ -65,22 +78,69 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
         if self._current_command:
             return self.data
 
-        client = await self._get_ble_client()
-        if client is None:
-            raise UpdateFailed(
-                f"Could not find BLE device {self._lock.nickname} with address {self._mac}. Device may not be in range."
-            )
-
         try:
+            # Inside the try so a failure while connecting is cleaned up by the finally
+            # below, not just a failure while reading.
+            client = await self._get_ble_client()
+            if client is None:
+                return self._handle_transient_failure(
+                    f"BLE device {self._lock.nickname} ({self._mac}) is not currently "
+                    "visible to any scanner"
+                )
             value = await client.read_gatt_char(YDBLE_LOCK_STATE_UUID)
-            return self._parse_state(value)
         except BleakCharacteristicNotFoundError as e:
+            # Not transient: the wrong device, a firmware problem, or pairing needed.
             raise UpdateFailed(
                 f"Characteristic {YDBLE_LOCK_STATE_UUID} not found on device {self._lock.nickname}. "
                 "Device may be locked, have firmware issues, or require pairing."
             ) from e
+        except (BleakError, TimeoutError, OSError) as err:
+            return self._handle_transient_failure(err)
+        else:
+            self._transient_failures = 0
+            return self._parse_state(value)
         finally:
             await self._disconnect()
+
+    def _handle_transient_failure(self, reason):
+        """Keep the last known state on a recoverable BLE failure.
+
+        Raises UpdateFailed if there is no previous state to serve, or once the failures
+        stop looking transient, so a genuinely unreachable lock still surfaces.
+        """
+        self._transient_failures += 1
+        if (
+            self._transient_failures > BOLT_MAX_TRANSIENT_FAILURES
+            or self.data.get("state") is None
+        ):
+            raise UpdateFailed(
+                f"Could not reach {self._lock.nickname} after "
+                f"{self._transient_failures} attempt(s): {reason}"
+            )
+
+        _LOGGER.debug(
+            "Transient BLE failure %s/%s for %s (%s); retrying in %ss and keeping the "
+            "last known state",
+            self._transient_failures,
+            BOLT_MAX_TRANSIENT_FAILURES,
+            self._lock.nickname,
+            reason,
+            BOLT_TRANSIENT_RETRY_SECONDS,
+        )
+        async_call_later(
+            self.hass, BOLT_TRANSIENT_RETRY_SECONDS, self._async_retry_refresh
+        )
+        return self.data
+
+    async def _async_retry_refresh(self, _now) -> None:
+        """Retry sooner than the poll interval after a transient failure.
+
+        Must stay a coroutine function rather than a plain lambda: async_call_later
+        cannot tell a bare callable is loop-safe, so it schedules it as an executor job
+        and anything touching hass from there trips Home Assistant's thread-safety
+        check. A coroutine function is recognised and awaited on the event loop.
+        """
+        await self.async_request_refresh()
 
     async def lock_unlock(self, command="lock"):
         if self._current_command:

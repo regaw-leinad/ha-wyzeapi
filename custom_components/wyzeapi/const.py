@@ -27,3 +27,24 @@ DEFAULT_LOCAL_CONTROL = True
 YDBLE_LOCK_STATE_UUID = "00002220-0000-6b63-6f6c-2e6b636f6f6c"
 YDBLE_UART_RX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 YDBLE_UART_TX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+
+# The Bolt accepts only one BLE connection at a time, so a failed poll usually means the
+# owner's phone app is talking to the lock rather than anything being wrong. Serving a
+# slightly stale state beats going `unavailable` for a full heartbeat interval, so retry
+# sooner than the next scheduled poll and only give up after several failures in a row.
+BOLT_TRANSIENT_RETRY_SECONDS = 120
+BOLT_MAX_TRANSIENT_FAILURES = 3
+# Lock Bolt state is poll-only: nothing pushes, so this interval is the sole bound on how
+# quickly a manual thumbturn, a keypad entry or an auto-lock is noticed. Lower is more
+# responsive but costs proportionally more BLE connects, and each connect wakes a
+# battery-powered lock that advertises only every ~7s.
+#
+#   interval   worst-case detection   BLE connects/day
+#      60s              1 min              1440
+#     120s              2 min               720
+#     300s              5 min               288   <- previous hardcoded value, kept default
+#    1800s             30 min                48
+BOLT_SCAN_INTERVAL = "bolt_scan_interval"
+DEFAULT_BOLT_SCAN_INTERVAL = 300
+MIN_BOLT_SCAN_INTERVAL = 30
+MAX_BOLT_SCAN_INTERVAL = 3600
