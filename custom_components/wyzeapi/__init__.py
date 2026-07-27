@@ -18,6 +18,8 @@ from wyzeapy.wyze_auth_lib import Token
 
 from .const import (
     DOMAIN,
+    BOLT_SCAN_INTERVAL,
+    DEFAULT_BOLT_SCAN_INTERVAL,
     CONF_CLIENT,
     ACCESS_TOKEN,
     REFRESH_TOKEN,
@@ -143,10 +145,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     }
     await setup_coordinators(hass, config_entry, client)
 
+    # Merge rather than replace. Assigning a fresh dict here silently dropped every
+    # other option on each startup, which is a pre-existing bug that only became
+    # observable once a second option existed.
     options_dict = {
+        **config_entry.options,
         BULB_LOCAL_CONTROL: config_entry.options.get(
             BULB_LOCAL_CONTROL, DEFAULT_LOCAL_CONTROL
-        )
+        ),
     }
     hass.config_entries.async_update_entry(config_entry, options=options_dict)
 
@@ -206,11 +212,16 @@ async def setup_coordinators(
         )
         return
 
+    scan_interval = config_entry.options.get(
+        BOLT_SCAN_INTERVAL, DEFAULT_BOLT_SCAN_INTERVAL
+    )
     lock_service = await client.lock_service
     for lock in await lock_service.get_locks():
         if lock.product_model == "YD_BT1":
             coordinators = hass.data[DOMAIN][config_entry.entry_id].setdefault(
                 "coordinators", {}
             )
-            coordinators[lock.mac] = WyzeLockBoltCoordinator(hass, lock_service, lock)
+            coordinators[lock.mac] = WyzeLockBoltCoordinator(
+                hass, lock_service, lock, scan_interval
+            )
             await coordinators[lock.mac].update_lock_info()
