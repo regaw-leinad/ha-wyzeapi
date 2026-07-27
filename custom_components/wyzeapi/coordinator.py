@@ -103,7 +103,6 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
             # Reuses the connection we already have open, so this costs no extra
             # BLE connect and does not wake the lock a second time.
             state["battery"] = await self._read_battery(client)
-            return state
         except BleakCharacteristicNotFoundError as e:
             # Not transient: the wrong device, a firmware problem, or pairing needed.
             raise UpdateFailed(
@@ -114,7 +113,7 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
             return self._handle_transient_failure(err)
         else:
             self._transient_failures = 0
-            return self._parse_state(value)
+            return state
         finally:
             await self._disconnect()
 
@@ -141,6 +140,7 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
             )
             return previous
         return percent
+
     def _handle_transient_failure(self, reason):
         """Keep the last known state on a recoverable BLE failure.
 
