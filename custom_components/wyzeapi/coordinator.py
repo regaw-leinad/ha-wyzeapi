@@ -19,6 +19,7 @@ from .const import (
     BOLT_COMMAND_TIMEOUT_SECONDS,
     YDBLE_CON_TYPE_PLAINTEXT,
     YDBLE_CON_TYPE_UUID,
+    YDBLE_BATTERY_LEVEL_UUID,
     YDBLE_LOCK_STATE_UUID,
     YDBLE_UART_RX_UUID,
     YDBLE_UART_TX_UUID,
@@ -30,6 +31,7 @@ from .ydble_utils import (
     pack_l1,
     pack_l2_dict,
     pack_l2_lock_unlock,
+    parse_battery_block,
     parse_l1,
     parse_l2_dict,
 )
@@ -63,7 +65,7 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
         self._current_command = None
         self._disconnect_task: asyncio.Task | None = None
         # Initialize data to prevent errors during setup
-        self.data = {"state": None, "timestamp": None}
+        self.data = {"state": None, "timestamp": None, "battery": None}
 
     @token_exception_handler
     async def update_lock_info(self):
@@ -86,7 +88,11 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
 
         try:
             value = await client.read_gatt_char(YDBLE_LOCK_STATE_UUID)
-            return self._parse_state(value)
+            state = self._parse_state(value)
+            # Reuses the connection we already have open, so this costs no extra
+            # BLE connect and does not wake the lock a second time.
+            state["battery"] = await self._read_battery(client)
+            return state
         except BleakCharacteristicNotFoundError as e:
             raise UpdateFailed(
                 f"Characteristic {YDBLE_LOCK_STATE_UUID} not found on device {self._lock.nickname}. "
@@ -94,6 +100,30 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
             ) from e
         finally:
             await self._disconnect()
+
+    async def _read_battery(self, client: BleakClient):
+        """Read the battery percentage over BLE.
+
+        Returns the previous reading on any failure so a bad battery read never fails
+        the whole refresh and takes the lock entity down with it.
+        """
+        previous = self.data.get("battery") if self.data else None
+        try:
+            raw = await client.read_gatt_char(YDBLE_BATTERY_LEVEL_UUID)
+        except (BleakError, TimeoutError, OSError) as err:
+            _LOGGER.debug("Could not read battery for %s: %s", self._lock.nickname, err)
+            return previous
+
+        percent = parse_battery_block(self._uuid[-16:].lower(), raw)
+        if percent is None:
+            _LOGGER.debug(
+                "Battery block for %s did not validate (raw %s); keeping %s",
+                self._lock.nickname,
+                binascii.hexlify(bytes(raw)),
+                previous,
+            )
+            return previous
+        return percent
 
     async def lock_unlock(self, command="lock"):
         if self._current_command:
@@ -205,7 +235,11 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
         await client.write_gatt_char(YDBLE_UART_TX_UUID, req, response=False)
 
     async def _handle_state(self, sender, data: bytearray):
-        self.data = self._parse_state(data)
+        state = self._parse_state(data)
+        # A state notification carries no battery reading, so carry the last one
+        # forward rather than blanking the battery sensor on every lock/unlock.
+        state["battery"] = self.data.get("battery") if self.data else None
+        self.data = state
         self._current_command = None
         self.async_update_listeners()
         # The command is done. The lock now holds the link open indefinitely because of
