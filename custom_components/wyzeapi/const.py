@@ -38,3 +38,7 @@ YDBLE_CON_TYPE_PLAINTEXT = b"10000000000loock"
 BOLT_COMMAND_DISCONNECT_SECONDS = 3
 # Safety net if an exchange never completes and no state notification arrives.
 BOLT_COMMAND_TIMEOUT_SECONDS = 30
+# Standard BLE Battery Level UUID, but the Bolt does not follow the spec here: instead of
+# a one-byte percentage it returns a 16-byte AES-128-ECB block using the same key as the
+# lock state characteristic. Reading byte 0 raw yields garbage. See ydble_utils.
+YDBLE_BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
