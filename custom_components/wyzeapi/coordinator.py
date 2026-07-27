@@ -14,7 +14,12 @@ from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from wyzeapy.services.lock_service import LockService, Lock
 
-from .const import YDBLE_LOCK_STATE_UUID, YDBLE_UART_RX_UUID, YDBLE_UART_TX_UUID
+from .const import (
+    DEFAULT_BOLT_SCAN_INTERVAL,
+    YDBLE_LOCK_STATE_UUID,
+    YDBLE_UART_RX_UUID,
+    YDBLE_UART_TX_UUID,
+)
 from .token_manager import token_exception_handler
 from .ydble_utils import (
     decrypt_ecb,
@@ -32,14 +37,18 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
     """Manages fetching data from BLE periodically."""
 
     def __init__(
-        self, hass: HomeAssistant, lock_service: LockService, lock: Lock
+        self,
+        hass: HomeAssistant,
+        lock_service: LockService,
+        lock: Lock,
+        scan_interval: int = DEFAULT_BOLT_SCAN_INTERVAL,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name="Wyze Lock State Updater",
-            update_interval=timedelta(seconds=300),
+            update_interval=timedelta(seconds=scan_interval),
         )
         self._lock_service = lock_service
         self._lock = lock
