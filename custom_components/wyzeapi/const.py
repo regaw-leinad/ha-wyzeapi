@@ -43,3 +43,10 @@ BOLT_COMMAND_TIMEOUT_SECONDS = 30
 # a one-byte percentage it returns a 16-byte AES-128-ECB block using the same key as the
 # lock state characteristic. Reading byte 0 raw yields garbage. See ydble_utils.
 YDBLE_BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+
+# The Bolt accepts only one BLE connection at a time, so a failed poll usually means the
+# owner's phone app is talking to the lock rather than anything being wrong. Serving a
+# slightly stale state beats going `unavailable` for a full heartbeat interval, so retry
+# sooner than the next scheduled poll and only give up after several failures in a row.
+BOLT_TRANSIENT_RETRY_SECONDS = 120
+BOLT_MAX_TRANSIENT_FAILURES = 3
