@@ -167,11 +167,19 @@ class WyzeLockBoltCoordinator(DataUpdateCoordinator):
             BOLT_TRANSIENT_RETRY_SECONDS,
         )
         async_call_later(
-            self.hass,
-            BOLT_TRANSIENT_RETRY_SECONDS,
-            lambda _now: self.hass.async_create_task(self.async_request_refresh()),
+            self.hass, BOLT_TRANSIENT_RETRY_SECONDS, self._async_retry_refresh
         )
         return self.data
+
+    async def _async_retry_refresh(self, _now) -> None:
+        """Retry sooner than the poll interval after a transient failure.
+
+        Must stay a coroutine function rather than a plain lambda: async_call_later
+        cannot tell a bare callable is loop-safe, so it schedules it as an executor job
+        and anything touching hass from there trips Home Assistant's thread-safety
+        check. A coroutine function is recognised and awaited on the event loop.
+        """
+        await self.async_request_refresh()
 
     async def lock_unlock(self, command="lock"):
         if self._current_command:
