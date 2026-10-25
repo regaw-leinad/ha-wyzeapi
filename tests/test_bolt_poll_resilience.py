@@ -73,9 +73,9 @@ async def test_transient_failure_schedules_an_earlier_retry():
 
     assert later.call_count == 1
     assert later.call_args[0][1] == BOLT_TRANSIENT_RETRY_SECONDS
-    assert (
-        BOLT_TRANSIENT_RETRY_SECONDS < coordinator.update_interval.total_seconds()
-    ), "a retry that is not sooner than the next poll would be pointless"
+    assert BOLT_TRANSIENT_RETRY_SECONDS < coordinator.update_interval.total_seconds(), (
+        "a retry that is not sooner than the next poll would be pointless"
+    )
 
 
 @pytest.mark.asyncio
